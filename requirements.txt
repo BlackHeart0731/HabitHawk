@@ -1,0 +1,6 @@
+customtkinter
+reportlab
+google-generativeai
+python-dotenv
+Pillow
+pyinstaller

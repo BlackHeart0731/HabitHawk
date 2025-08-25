@@ -1,0 +1,13 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+.env
+
+# PyInstaller build folders and files
+build/
+dist/
+HabitHawk.spec
+
+# OS-specific files
+.DS_Store
+Thumbs.db
