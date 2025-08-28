@@ -74,7 +74,7 @@ class App(ctk.CTk):
         # 最初のタイマーを追加
         self.add_timer_ui()
 
-        # タイマー追加ボタン (スクロールフレームの外に配置)
+        # タイマー追加ボタン
         add_button = ctk.CTkButton(self, text="+", command=self.add_timer_ui)
         add_button.pack(pady=5)
 
@@ -98,6 +98,7 @@ class App(ctk.CTk):
         stop_button = ctk.CTkButton(button_frame, text="STOP", command=lambda: self.stop_tracking(timer_id), state=tk.DISABLED)
         stop_button.pack(side=tk.RIGHT, expand=True, padx=5, pady=0)
 
+        # `remove_button`をフレームに含める
         remove_button = ctk.CTkButton(frame, text="-", command=lambda: self.remove_timer_ui(timer_id))
         remove_button.pack(pady=(5, 0))
 
@@ -110,36 +111,31 @@ class App(ctk.CTk):
             'entry': entry,
             'timer_label': timer_label,
             'start_button': start_button,
-            'stop_button': stop_button,
-            'remove_button': remove_button
+            'stop_button': stop_button
         }
 
-        # タイマーが複数になったら、すべての - ボタンを表示
-        if len(self.timers) > 1:
-            for timer in self.timers.values():
-                timer['remove_button'].pack(pady=(5, 0))
-        else:
-            # 最初のタイマーは - ボタンを非表示に
-            self.timers[timer_id]['remove_button'].pack_forget()
-
     def remove_timer_ui(self, timer_id):
-        if self.timers[timer_id]['is_tracking']:
-            messagebox.showwarning("Warning", "Please stop the timer before removing it.")
-            return
+        if len(self.timers) > 1:
+            if self.timers[timer_id]['is_tracking']:
+                messagebox.showwarning("Warning", "Please stop the timer before removing it.")
+                return
 
-        self.timers[timer_id]['frame'].destroy()
-        del self.timers[timer_id]
-
-        # タイマーが1つになったら - ボタンを非表示に
-        if len(self.timers) == 1:
-            list(self.timers.values())[0]['remove_button'].pack_forget()
-
+            self.timers[timer_id]['frame'].destroy()
+            del self.timers[timer_id]
+        else:
+            messagebox.showwarning("Warning", "At least one timer must remain.")
 
     def start_tracking(self, timer_id):
         timer = self.timers[timer_id]
         if not timer['is_tracking']:
             activity_name = timer['entry'].get().strip()
             if activity_name:
+                # すべてのタイマーを停止
+                for tid, t in self.timers.items():
+                    if t['is_tracking']:
+                        self.stop_tracking(tid)
+                
+                # 選択されたタイマーをスタート
                 timer['is_tracking'] = True
                 timer['start_time'] = datetime.datetime.now()
                 timer['current_activity'] = activity_name
@@ -243,63 +239,16 @@ def format_data_for_ai(raw_data):
 def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
     is_praise_mode = random.random() < 0.05
     all_activities = defaultdict(datetime.datetime)
-    
-    # --- 新しい時間帯の分析ロジックを追加 ---
-    time_of_day_breakdown = {
-        "深夜": 0, # 午前1時 - 午前5時
-        "朝": 0,   # 午前5時 - 午前10時
-        "昼": 0,   # 午前10時 - 午後3時
-        "夕": 0,   # 午後3時 - 午後8時
-        "夜": 0,   # 午後8時 - 翌午前1時
-    }
-    
-    for row in all_data:
-        start_time = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
-        end_time = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
-        duration = (end_time - start_time).total_seconds()
-        
-        # タイムスロットの判定と時間集計
-        current_time = start_time
-        while current_time < end_time:
-            hour = current_time.hour
-            time_tag = ""
-            if 1 <= hour < 5:
-                time_tag = "深夜"
-            elif 5 <= hour < 10:
-                time_tag = "朝"
-            elif 10 <= hour < 15:
-                time_tag = "昼"
-            elif 15 <= hour < 20:
-                time_tag = "夕"
-            elif 20 <= hour < 24 or hour == 0:
-                time_tag = "夜"
-            
-            next_hour = current_time.replace(minute=0, second=0) + datetime.timedelta(hours=1)
-            # 現在のタイムスロット内で経過した時間を計算
-            overlap_duration = min((end_time - current_time).total_seconds(), (next_hour - current_time).total_seconds())
-            if time_tag:
-                time_of_day_breakdown[time_tag] += overlap_duration
-            
-            current_time = next_hour
-    # --- ここまで時間帯の分析ロジックを追加 ---
-    
     for row in all_data:
         end_time = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
         canonical_name = get_canonical_name(row[2].strip())
         all_activities[canonical_name] = max(all_activities[canonical_name], end_time)
-    
     long_absent_activities = []
     for activity, last_date in all_activities.items():
         if (datetime.datetime.now() - last_date).days > 30 and activity not in aggregated_data:
             long_absent_activities.append(activity)
-            
     recorded_clusters = {get_canonical_name(row[2].strip()) for row in all_data}
     missing_clusters = [cluster for cluster in SYNONYM_MAPPING if cluster not in recorded_clusters]
-    
-    time_of_day_prompt = ""
-    for tag, seconds in time_of_day_breakdown.items():
-        time_of_day_prompt += f"- {tag}: {seconds / 3600:.2f}時間\n"
-
     prompt = ""
     if is_praise_mode:
         prompt = f"""
@@ -310,6 +259,25 @@ def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
         {formatted_data}
         """
     else:
+        time_of_day_breakdown = defaultdict(float)
+        for row in all_data:
+            start_time = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+            end_time = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
+            duration_seconds = (end_time - start_time).total_seconds()
+            hour = start_time.hour
+            if 0 <= hour < 6:
+                time_of_day_breakdown['深夜 (0時〜6時)'] += duration_seconds
+            elif 6 <= hour < 12:
+                time_of_day_breakdown['朝 (6時〜12時)'] += duration_seconds
+            elif 12 <= hour < 18:
+                time_of_day_breakdown['昼 (12時〜18時)'] += duration_seconds
+            else:
+                time_of_day_breakdown['夜 (18時〜0時)'] += duration_seconds
+        
+        time_of_day_prompt = "### 時間帯別活動時間\n"
+        for time_range, duration in time_of_day_breakdown.items():
+            time_of_day_prompt += f"- {time_range}: {duration:.2f} 秒\n"
+
         prompt = f"""
         あなたはAI「Hawk Eye」です。以下のデータはユーザーの活動記録です。
         データに基づき、Hawkが以下の点を厳格かつ感情を持たない三人称の口調で指摘してください。
@@ -318,13 +286,11 @@ def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
         3. 活動時間の急増、偏重など、バランスの悪さを指摘。
         4. もし以下の活動が30日以上記録されていなければ、そのことを指摘してください。: {', '.join(long_absent_activities)}
         5. もし以下のクラスタに記録がなければ、そのことを指摘してください。: {', '.join(missing_clusters)}
+        6. 時間帯別の活動時間データから、生活リズムの偏りや改善点を指摘してください。
         
         データ:
         {formatted_data}
-        ---
-        活動時間帯の分析:
         {time_of_day_prompt}
-        このデータに基づき、どの時間帯が最も活動的で、どの時間帯が最も非活動的か、またその傾向がユーザーの生活にどう影響しているか客観的に指摘してください。深夜の活動時間だけでなく、日中の活動バランスについても言及してください。
         """
     try:
         response = model.generate_content(prompt)
