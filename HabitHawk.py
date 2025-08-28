@@ -6,7 +6,7 @@ import subprocess
 import os
 import sys
 import customtkinter as ctk
-from PIL import Image, ImageTk
+from PIL import Image
 import random
 import difflib
 from collections import defaultdict
@@ -39,76 +39,144 @@ c.execute('''
 ''')
 conn.commit()
 
-# 変数の初期化
-is_tracking = False
-start_time = None
-current_activity = ""
-tracking_duration = 0
-
-# UIの構築
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
-
-root = ctk.CTk()
-root.title("HabitHawk.exe")
-root.geometry("400x200")
-
-# アイコンの設定
-try:
-    root.iconbitmap(resource_path("HabitHawk.ico"))
-except Exception as e:
-    print(f"ウィンドウアイコンの設定中にエラーが発生しました: {e}")
-
-# 「Activity:」に変更、padyを調整
-activity_label = ctk.CTkLabel(root, text="Activity:", font=("Helvetica", 12))
-activity_label.pack(pady=(15, 0))
-activity_entry = ctk.CTkEntry(root, width=280, font=("Helvetica", 12))
-activity_entry.pack()
-
-# タイマー表示ラベル、padyを調整
-timer_label = ctk.CTkLabel(root, text="00:00:00", font=("Helvetica", 24))
-timer_label.pack(pady=5)
-
-def start_tracking():
-    global is_tracking, start_time, current_activity, tracking_duration
-    if not is_tracking:
-        current_activity = activity_entry.get().strip()
-        if current_activity:
-            is_tracking = True
-            start_time = datetime.datetime.now()
-            tracking_duration = 0
-            start_button.configure(state=tk.DISABLED)
-            stop_button.configure(state=tk.NORMAL)
-            update_timer()
-        else:
-            messagebox.showwarning("Warning", "Please enter an activity!")
-
-def stop_tracking():
-    global is_tracking
-    if is_tracking:
-        is_tracking = False
-        end_time = datetime.datetime.now()
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
         
-        c.execute("INSERT INTO activities VALUES (?, ?, ?)", 
-                  (start_time.strftime("%Y-%m-%d %H:%M:%S"), 
-                   end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                   current_activity))
-        conn.commit()
+        # 変数の初期化
+        self.timers = {}
+        
+        # UIの構築
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+        self.title("HabitHawk.exe")
+        self.geometry("400x300")
+        
+        # ウィンドウアイコンの設定
+        try:
+            self.iconbitmap(resource_path("HabitHawk.ico"))
+        except Exception as e:
+            print(f"ウィンドウアイコンの設定中にエラーが発生しました: {e}")
 
-        start_button.configure(state=tk.NORMAL)
-        stop_button.configure(state=tk.DISABLED)
-        timer_label.configure(text="00:00:00")
-        activity_entry.delete(0, tk.END)
+        # ロゴの追加
+        try:
+            logo_path = resource_path('images/HabitHawk.png')
+            logo_image = ctk.CTkImage(Image.open(logo_path), size=(100, 100))
+            logo_label = ctk.CTkLabel(self, image=logo_image, text="")
+            logo_label.pack(pady=(10, 0))
+        except Exception as e:
+            print(f"ロゴの読み込み中にエラーが発生しました: {e}")
 
-def update_timer():
-    global tracking_duration
-    if is_tracking:
-        tracking_duration = (datetime.datetime.now() - start_time).total_seconds()
-        hours, remainder = divmod(tracking_duration, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        timer_label.configure(text=f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}")
-        root.after(1000, update_timer)
+        # タイマーを格納するコンテナフレーム
+        self.timer_container = ctk.CTkScrollableFrame(self)
+        self.timer_container.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # 最初のタイマーを追加
+        self.add_timer_ui()
 
+        # タイマー追加ボタン (スクロールフレームの外に配置)
+        add_button = ctk.CTkButton(self, text="+", command=self.add_timer_ui)
+        add_button.pack(pady=5)
+
+    def add_timer_ui(self):
+        timer_id = f"timer_{len(self.timers)}"
+        
+        frame = ctk.CTkFrame(self.timer_container, fg_color="transparent")
+        frame.pack(pady=5, fill="x")
+
+        # UI要素の作成
+        entry = ctk.CTkEntry(frame, width=280, font=("Helvetica", 12))
+        entry.pack(pady=(0, 5))
+        timer_label = ctk.CTkLabel(frame, text="00:00:00", font=("Helvetica", 24))
+        timer_label.pack(pady=5)
+
+        button_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        button_frame.pack(pady=(5, 0))
+
+        start_button = ctk.CTkButton(button_frame, text="START", command=lambda: self.start_tracking(timer_id))
+        start_button.pack(side=tk.LEFT, expand=True, padx=5, pady=0)
+        stop_button = ctk.CTkButton(button_frame, text="STOP", command=lambda: self.stop_tracking(timer_id), state=tk.DISABLED)
+        stop_button.pack(side=tk.RIGHT, expand=True, padx=5, pady=0)
+
+        remove_button = ctk.CTkButton(frame, text="-", command=lambda: self.remove_timer_ui(timer_id))
+        remove_button.pack(pady=(5, 0))
+
+        self.timers[timer_id] = {
+            'is_tracking': False,
+            'start_time': None,
+            'current_activity': "",
+            'tracking_duration': 0,
+            'frame': frame,
+            'entry': entry,
+            'timer_label': timer_label,
+            'start_button': start_button,
+            'stop_button': stop_button,
+            'remove_button': remove_button
+        }
+
+        # タイマーが複数になったら、すべての - ボタンを表示
+        if len(self.timers) > 1:
+            for timer in self.timers.values():
+                timer['remove_button'].pack(pady=(5, 0))
+        else:
+            # 最初のタイマーは - ボタンを非表示に
+            self.timers[timer_id]['remove_button'].pack_forget()
+
+    def remove_timer_ui(self, timer_id):
+        if self.timers[timer_id]['is_tracking']:
+            messagebox.showwarning("Warning", "Please stop the timer before removing it.")
+            return
+
+        self.timers[timer_id]['frame'].destroy()
+        del self.timers[timer_id]
+
+        # タイマーが1つになったら - ボタンを非表示に
+        if len(self.timers) == 1:
+            list(self.timers.values())[0]['remove_button'].pack_forget()
+
+
+    def start_tracking(self, timer_id):
+        timer = self.timers[timer_id]
+        if not timer['is_tracking']:
+            activity_name = timer['entry'].get().strip()
+            if activity_name:
+                timer['is_tracking'] = True
+                timer['start_time'] = datetime.datetime.now()
+                timer['current_activity'] = activity_name
+                timer['tracking_duration'] = 0
+                timer['start_button'].configure(state=tk.DISABLED)
+                timer['stop_button'].configure(state=tk.NORMAL)
+                self.update_timer(timer_id)
+            else:
+                messagebox.showwarning("Warning", "Please enter an activity!")
+
+    def stop_tracking(self, timer_id):
+        timer = self.timers[timer_id]
+        if timer['is_tracking']:
+            timer['is_tracking'] = False
+            end_time = datetime.datetime.now()
+            
+            c.execute("INSERT INTO activities VALUES (?, ?, ?)", 
+                      (timer['start_time'].strftime("%Y-%m-%d %H:%M:%S"), 
+                       end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                       timer['current_activity']))
+            conn.commit()
+            
+            timer['start_button'].configure(state=tk.NORMAL)
+            timer['stop_button'].configure(state=tk.DISABLED)
+            timer['timer_label'].configure(text="00:00:00")
+            timer['entry'].delete(0, tk.END)
+
+    def update_timer(self, timer_id):
+        timer = self.timers[timer_id]
+        if timer['is_tracking']:
+            timer['tracking_duration'] = (datetime.datetime.now() - timer['start_time']).total_seconds()
+            hours, remainder = divmod(timer['tracking_duration'], 3600)
+            minutes, seconds = divmod(remainder, 60)
+            timer['timer_label'].configure(text=f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}")
+            self.after(1000, lambda: self.update_timer(timer_id))
+
+# 以下、既存のレポート生成コードは変更なし
 # --- report_generator.py から統合されたコード ---
 
 # .envファイルから環境変数を読み込む
@@ -175,16 +243,63 @@ def format_data_for_ai(raw_data):
 def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
     is_praise_mode = random.random() < 0.05
     all_activities = defaultdict(datetime.datetime)
+    
+    # --- 新しい時間帯の分析ロジックを追加 ---
+    time_of_day_breakdown = {
+        "深夜": 0, # 午前1時 - 午前5時
+        "朝": 0,   # 午前5時 - 午前10時
+        "昼": 0,   # 午前10時 - 午後3時
+        "夕": 0,   # 午後3時 - 午後8時
+        "夜": 0,   # 午後8時 - 翌午前1時
+    }
+    
+    for row in all_data:
+        start_time = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        end_time = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
+        duration = (end_time - start_time).total_seconds()
+        
+        # タイムスロットの判定と時間集計
+        current_time = start_time
+        while current_time < end_time:
+            hour = current_time.hour
+            time_tag = ""
+            if 1 <= hour < 5:
+                time_tag = "深夜"
+            elif 5 <= hour < 10:
+                time_tag = "朝"
+            elif 10 <= hour < 15:
+                time_tag = "昼"
+            elif 15 <= hour < 20:
+                time_tag = "夕"
+            elif 20 <= hour < 24 or hour == 0:
+                time_tag = "夜"
+            
+            next_hour = current_time.replace(minute=0, second=0) + datetime.timedelta(hours=1)
+            # 現在のタイムスロット内で経過した時間を計算
+            overlap_duration = min((end_time - current_time).total_seconds(), (next_hour - current_time).total_seconds())
+            if time_tag:
+                time_of_day_breakdown[time_tag] += overlap_duration
+            
+            current_time = next_hour
+    # --- ここまで時間帯の分析ロジックを追加 ---
+    
     for row in all_data:
         end_time = datetime.datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
         canonical_name = get_canonical_name(row[2].strip())
         all_activities[canonical_name] = max(all_activities[canonical_name], end_time)
+    
     long_absent_activities = []
     for activity, last_date in all_activities.items():
         if (datetime.datetime.now() - last_date).days > 30 and activity not in aggregated_data:
             long_absent_activities.append(activity)
+            
     recorded_clusters = {get_canonical_name(row[2].strip()) for row in all_data}
     missing_clusters = [cluster for cluster in SYNONYM_MAPPING if cluster not in recorded_clusters]
+    
+    time_of_day_prompt = ""
+    for tag, seconds in time_of_day_breakdown.items():
+        time_of_day_prompt += f"- {tag}: {seconds / 3600:.2f}時間\n"
+
     prompt = ""
     if is_praise_mode:
         prompt = f"""
@@ -203,8 +318,13 @@ def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
         3. 活動時間の急増、偏重など、バランスの悪さを指摘。
         4. もし以下の活動が30日以上記録されていなければ、そのことを指摘してください。: {', '.join(long_absent_activities)}
         5. もし以下のクラスタに記録がなければ、そのことを指摘してください。: {', '.join(missing_clusters)}
+        
         データ:
         {formatted_data}
+        ---
+        活動時間帯の分析:
+        {time_of_day_prompt}
+        このデータに基づき、どの時間帯が最も活動的で、どの時間帯が最も非活動的か、またその傾向がユーザーの生活にどう影響しているか客観的に指摘してください。深夜の活動時間だけでなく、日中の活動バランスについても言及してください。
         """
     try:
         response = model.generate_content(prompt)
@@ -276,12 +396,6 @@ def run_report_generator(report_type):
 
 # --- generate_hawk_eye_report()関数の修正 ---
 
-# Hawk Eye ボタンの表示ロジック
-today = datetime.date.today()
-is_sunday = today.isoweekday() == 7
-last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
-is_last_day = today == last_day_of_month
-
 def generate_hawk_eye_report():
     try:
         if not os.path.exists(resource_path("reports/weekly")):
@@ -289,6 +403,11 @@ def generate_hawk_eye_report():
         if not os.path.exists(resource_path("reports/monthly")):
             os.makedirs(resource_path("reports/monthly"))
             
+        today = datetime.date.today()
+        is_sunday = today.isoweekday() == 7
+        last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
+        is_last_day = today == last_day_of_month
+
         if is_last_day:
             run_report_generator('monthly')
             messagebox.showinfo("Success", "Hawk Eye Monthly Report ready.")
@@ -298,19 +417,20 @@ def generate_hawk_eye_report():
     except Exception as e:
         messagebox.showerror("Error", f"Report generation failed: {e}")
 
-# ボタンの作成
-button_frame = ctk.CTkFrame(root, fg_color="transparent")
-button_frame.pack(pady=(5, 0))
+# アプリケーションの実行
+if __name__ == "__main__":
+    app = App()
+    
+    # Hawk Eyeボタンの表示ロジック
+    today = datetime.date.today()
+    is_sunday = today.isoweekday() == 7
+    last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
+    is_last_day = today == last_day_of_month
 
-start_button = ctk.CTkButton(button_frame, text="START", command=start_tracking)
-start_button.pack(side=tk.LEFT, expand=True, padx=5, pady=0)
-stop_button = ctk.CTkButton(button_frame, text="STOP", command=stop_tracking, state=tk.DISABLED)
-stop_button.pack(side=tk.RIGHT, expand=True, padx=5, pady=0)
+    if is_sunday or is_last_day:
+        hawk_eye_button = ctk.CTkButton(app, text="Hawk Eye", command=generate_hawk_eye_report)
+        hawk_eye_button.pack(pady=10)
 
-if is_sunday or is_last_day:
-    hawk_eye_button = ctk.CTkButton(root, text="Hawk Eye", command=generate_hawk_eye_report)
-    hawk_eye_button.pack(pady=10)
-
-root.mainloop()
+    app.mainloop()
 
 conn.close()
