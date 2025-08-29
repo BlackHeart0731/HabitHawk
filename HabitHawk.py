@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import messagebox
 import sqlite3
 import datetime
-import subprocess
 import os
 import sys
 import customtkinter as ctk
@@ -10,13 +9,23 @@ from PIL import Image
 import random
 import difflib
 from collections import defaultdict
-import google.generativeai as genai
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from dotenv import load_dotenv
+import json
+import uuid
+
+def get_heavy_libs():
+    """遅延インポート: この関数が呼び出されたときに重いライブラリを読み込む"""
+    try:
+        import google.generativeai as genai
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from dotenv import load_dotenv
+        return genai, A4, SimpleDocTemplate, Paragraph, Spacer, getSampleStyleSheet, pdfmetrics, TTFont, load_dotenv
+    except ImportError as e:
+        messagebox.showerror("エラー", f"必要なライブラリが見つかりません: {e}\nPyInstallerで正しくバンドルされているか確認してください。")
+        sys.exit()
 
 def resource_path(relative_path):
     """PyInstallerでビルドされた際のリソースパスを取得する"""
@@ -26,10 +35,110 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-# データベースへの接続
+def set_custom_theme():
+    """テーマをPythonコード内で直接定義し、一時ファイルとして保存して適用する"""
+    # 完全に定義されたテーマの辞書
+    complete_theme = {
+        "CTk": {
+            "fg_color": ["#932a13", "#932a13"],
+            "bg_color": ["#932a13", "#932a13"]
+        },
+        "CTkFont": {
+            "family": "Helvetica",
+            "size": 13,
+            "weight": "normal",
+            "slant": "roman"
+        },
+        "CTkToplevel": {
+            "fg_color": ["#932a13", "#932a13"],
+            "bg_color": ["#932a13", "#932a13"]
+        },
+        "CTkFrame": {
+            "fg_color": ["#795548", "#795548"],
+            "bg_color": ["#932a13", "#932a13"],
+            "border_color": ["transparent", "transparent"],
+            "border_width": 0,
+            "corner_radius": 0
+        },
+        "CTkButton": {
+            "fg_color": ["#e8b91f", "#e8b91f"],
+            "hover_color": ["#d0a41b", "#d0a41b"],
+            "text_color": ["#f2edee", "#f2edee"],
+            "text_color_disabled": ["#E0E0E0", "#E0E0E0"],
+            "border_color": ["transparent", "transparent"],
+            "border_width": 0,
+            "corner_radius": 0
+        },
+        "CTkLabel": {
+            "text_color": ["#f2edee", "#f2edee"],
+            "fg_color": ["transparent", "transparent"],
+            "corner_radius": 0
+        },
+        "CTkEntry": {
+            "fg_color": ["#D7CCC8", "#4E342E"],
+            "text_color": ["#000000", "#f2edee"],
+            "placeholder_text_color": ["#6A6A6A", "#CFCFCF"],
+            "border_color": ["#9A9A9A", "#6A6A6A"],
+            "border_width": 2,
+            "corner_radius": 5
+        },
+        "CTkScrollableFrame": {
+            "label_fg_color": ["#795548", "#795548"],
+            "fg_color": ["#795548", "#795548"],
+            "scrollbar_fg_color": ["#795548", "#795548"],
+            "scrollbar_button_color": ["#A1887F", "#A1887F"],
+            "scrollbar_button_hover_color": ["#BCAAA4", "#BCAAA4"],
+            "border_color": ["transparent", "transparent"],
+            "border_width": 0,
+            "corner_radius": 0
+        },
+        "CTkScrollbar": {
+            "fg_color": ["#A1887F", "#A1887F"],
+            "button_color": ["#8D6E63", "#8D6E63"],
+            "button_hover_color": ["#7A5C53", "#7A5C53"],
+            "border_spacing": 0,
+            "border_color": ["transparent", "transparent"],
+            "border_width": 0,
+            "corner_radius": 0
+        },
+        "CTkProgressBar": {
+            "fg_color": ["#795548", "#795548"],
+            "progress_color": ["#A1887F", "#A1887F"]
+        },
+        "CTkOptionMenu": {
+            "fg_color": ["#e8b91f", "#e8b91f"],
+            "hover_color": ["#d0a41b", "#d0a41b"],
+            "text_color": ["#f2edee", "#f2edee"]
+        }
+    }
+
+    try:
+        # 一時ファイルとして保存
+        temp_filename = f"temp_hawk_theme_{uuid.uuid4().hex}.json"
+        temp_theme_path = os.path.join(os.path.dirname(resource_path("")), temp_filename)
+        
+        # 既存のテーマファイルがあっても、新しいテーマで上書きする
+        merged_theme = complete_theme
+        
+        with open(temp_theme_path, "w", encoding="utf-8") as f:
+            json.dump(merged_theme, f, indent=2)
+
+        ctk.set_default_color_theme(temp_theme_path)
+        ctk.set_appearance_mode("dark")
+        
+        def delete_temp_file():
+            if os.path.exists(temp_theme_path):
+                os.remove(temp_theme_path)
+        return delete_temp_file
+        
+    except Exception as e:
+        print(f"カスタムテーマの設定中にエラーが発生しました: {e}")
+        ctk.set_default_color_theme("blue")
+        return None
+
+# データベースへの接続（軽量なため、ここに残す）
 conn = sqlite3.connect(resource_path('habit_log.db'))
 c = conn.cursor()
-
 c.execute('''
     CREATE TABLE IF NOT EXISTS activities (
         start_time TEXT,
@@ -39,69 +148,84 @@ c.execute('''
 ''')
 conn.commit()
 
+# --- Appクラス ---
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # 変数の初期化
         self.timers = {}
-        
-        # UIの構築
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
-        self.title("HabitHawk.exe")
-        self.geometry("400x300")
-        
-        # ウィンドウアイコンの設定
-        try:
-            self.iconbitmap(resource_path("HabitHawk.ico"))
-        except Exception as e:
-            print(f"ウィンドウアイコンの設定中にエラーが発生しました: {e}")
+        self.title("HabitHawk")
+        self.geometry("320x450")
+        self.resizable(width=False, height=False)
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+          # --- 変更箇所: ロゴ画像をインスタンス変数に格納する ---
+        self.app_logo_image_ref = None
+        self.splash_logo_image_ref = None # スプラッシュスクリーンロゴも念のため
+        self.load_ui()
 
-        # ロゴの追加
+    def on_closing(self):
+        """アプリケーション終了時の処理"""
+        for timer_id in list(self.timers.keys()):
+            timer = self.timers[timer_id]
+            if timer['is_tracking']:
+                self.stop_tracking(timer_id)
+        conn.close()
+        self.destroy()
+        sys.exit()
+
+    def load_ui(self):
+        # ロゴ画像の設定
         try:
+            # imagesフォルダ内のHabitHawk.pngを読み込む
             logo_path = resource_path('images/HabitHawk.png')
-            logo_image = ctk.CTkImage(Image.open(logo_path), size=(100, 100))
-            logo_label = ctk.CTkLabel(self, image=logo_image, text="")
-            logo_label.pack(pady=(10, 0))
+            if os.path.exists(logo_path):
+                # --- 変更箇所: 画像をインスタンス変数に格納する ---
+                self.app_logo_image_ref = ctk.CTkImage(Image.open(logo_path), size=(100, 100))
+                logo_label = ctk.CTkLabel(self, image=self.app_logo_image_ref, text="")
+                # --- 変更ここまで ---
+                logo_label.pack(pady=(10, 0))
+            else:
+                print(f"ロゴファイルが見つかりません: {logo_path}")
+                text_label = ctk.CTkLabel(self, text="HabitHawk", font=("Helvetica", 24))
+                text_label.pack(pady=(10, 0))
         except Exception as e:
             print(f"ロゴの読み込み中にエラーが発生しました: {e}")
+            text_label = ctk.CTkLabel(self, text="HabitHawk", font=("Helvetica", 24))
+            text_label.pack(pady=(10, 0))
 
-        # タイマーを格納するコンテナフレーム
         self.timer_container = ctk.CTkScrollableFrame(self)
         self.timer_container.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # 最初のタイマーを追加
         self.add_timer_ui()
 
-        # タイマー追加ボタン
-        add_button = ctk.CTkButton(self, text="+", command=self.add_timer_ui)
-        add_button.pack(pady=5)
+        today = datetime.date.today()
+        is_sunday = today.isoweekday() == 7
+        last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
+        is_last_day = today == last_day_of_month
 
+        if is_sunday or is_last_day:
+            hawk_eye_button = ctk.CTkButton(self, text="Hawk Eye", command=generate_pdf_report)
+            hawk_eye_button.pack(pady=10)
+    
     def add_timer_ui(self):
         timer_id = f"timer_{len(self.timers)}"
-        
         frame = ctk.CTkFrame(self.timer_container, fg_color="transparent")
         frame.pack(pady=5, fill="x")
-
-        # UI要素の作成
         entry = ctk.CTkEntry(frame, width=280, font=("Helvetica", 12))
         entry.pack(pady=(0, 5))
         timer_label = ctk.CTkLabel(frame, text="00:00:00", font=("Helvetica", 24))
         timer_label.pack(pady=5)
-
         button_frame = ctk.CTkFrame(frame, fg_color="transparent")
         button_frame.pack(pady=(5, 0))
-
         start_button = ctk.CTkButton(button_frame, text="START", command=lambda: self.start_tracking(timer_id))
         start_button.pack(side=tk.LEFT, expand=True, padx=5, pady=0)
         stop_button = ctk.CTkButton(button_frame, text="STOP", command=lambda: self.stop_tracking(timer_id), state=tk.DISABLED)
         stop_button.pack(side=tk.RIGHT, expand=True, padx=5, pady=0)
-
-        # `remove_button`をフレームに含める
-        remove_button = ctk.CTkButton(frame, text="-", command=lambda: self.remove_timer_ui(timer_id))
-        remove_button.pack(pady=(5, 0))
-
+        control_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        control_frame.pack(pady=(5, 0))
+        add_button = ctk.CTkButton(control_frame, text="+", command=self.add_timer_ui)
+        add_button.pack(side=tk.LEFT, padx=5)
+        remove_button = ctk.CTkButton(control_frame, text="-", command=lambda: self.remove_timer_ui(timer_id))
+        remove_button.pack(side=tk.LEFT, padx=5)
         self.timers[timer_id] = {
             'is_tracking': False,
             'start_time': None,
@@ -116,48 +240,36 @@ class App(ctk.CTk):
 
     def remove_timer_ui(self, timer_id):
         if len(self.timers) > 1:
-            if self.timers[timer_id]['is_tracking']:
-                messagebox.showwarning("Warning", "Please stop the timer before removing it.")
-                return
-
-            self.timers[timer_id]['frame'].destroy()
+            timer_to_remove = self.timers[timer_id]
+            if timer_to_remove['is_tracking']:
+                self.stop_tracking(timer_id)
+            timer_to_remove['frame'].destroy()
             del self.timers[timer_id]
         else:
             messagebox.showwarning("Warning", "At least one timer must remain.")
 
     def start_tracking(self, timer_id):
         timer = self.timers[timer_id]
-        if not timer['is_tracking']:
-            activity_name = timer['entry'].get().strip()
-            if activity_name:
-                # すべてのタイマーを停止
-                for tid, t in self.timers.items():
-                    if t['is_tracking']:
-                        self.stop_tracking(tid)
-                
-                # 選択されたタイマーをスタート
-                timer['is_tracking'] = True
-                timer['start_time'] = datetime.datetime.now()
-                timer['current_activity'] = activity_name
-                timer['tracking_duration'] = 0
-                timer['start_button'].configure(state=tk.DISABLED)
-                timer['stop_button'].configure(state=tk.NORMAL)
-                self.update_timer(timer_id)
-            else:
-                messagebox.showwarning("Warning", "Please enter an activity!")
+        activity_name = timer['entry'].get().strip()
+        if activity_name and not timer['is_tracking']:
+            timer['is_tracking'] = True
+            timer['start_time'] = datetime.datetime.now()
+            timer['current_activity'] = activity_name
+            timer['tracking_duration'] = 0
+            timer['start_button'].configure(state=tk.DISABLED)
+            timer['stop_button'].configure(state=tk.NORMAL)
+            self.update_timer(timer_id)
 
     def stop_tracking(self, timer_id):
         timer = self.timers[timer_id]
         if timer['is_tracking']:
             timer['is_tracking'] = False
             end_time = datetime.datetime.now()
-            
-            c.execute("INSERT INTO activities VALUES (?, ?, ?)", 
-                      (timer['start_time'].strftime("%Y-%m-%d %H:%M:%S"), 
+            c.execute("INSERT INTO activities VALUES (?, ?, ?)",
+                      (timer['start_time'].strftime("%Y-%m-%d %H:%M:%S"),
                        end_time.strftime("%Y-%m-%d %H:%M:%S"),
                        timer['current_activity']))
             conn.commit()
-            
             timer['start_button'].configure(state=tk.NORMAL)
             timer['stop_button'].configure(state=tk.DISABLED)
             timer['timer_label'].configure(text="00:00:00")
@@ -172,26 +284,7 @@ class App(ctk.CTk):
             timer['timer_label'].configure(text=f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}")
             self.after(1000, lambda: self.update_timer(timer_id))
 
-# 以下、既存のレポート生成コードは変更なし
-# --- report_generator.py から統合されたコード ---
-
-# .envファイルから環境変数を読み込む
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# ZenAntique-Regular.ttfフォントを登録
-pdfmetrics.registerFont(TTFont('ZenAntique', resource_path('ZenAntique-Regular.ttf')))
-
-# APIキーが設定されていない場合は警告を表示し、プログラムを終了
-if not GEMINI_API_KEY:
-    print("警告: .envファイルにGEMINI_API_KEYが設定されていません。")
-    print("Gemini APIを使用するには、有効なキーを設定してください。")
-
-# Gemini APIの設定
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-pro')
-
-# 同義語・クラスタリングのマッピング
+# --- Report Generator ---
 SYNONYM_MAPPING = {
     '入浴': ['風呂', 'お風呂', 'シャワー', '温泉', 'bath'],
     '音楽活動': ['ギター', '作曲', '楽器練習', 'music'],
@@ -199,7 +292,6 @@ SYNONYM_MAPPING = {
     '配信業務': ['配信', 'ライブ配信', 'OBS設定', '配信準備', 'stream'],
     'コンテンツ消費': ['youtube', 'netflix', 'hulu', '映画鑑賞', 'movie'],
 }
-
 def get_canonical_name(activity_name):
     lower_name = activity_name.lower()
     for canonical, synonyms in SYNONYM_MAPPING.items():
@@ -237,6 +329,14 @@ def format_data_for_ai(raw_data):
     return formatted_string, aggregated_data
 
 def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
+    genai, _, _, _, _, _, _, _, load_dotenv = get_heavy_libs()
+    load_dotenv()
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        return "警告: .envファイルにGEMINI_API_KEYが設定されていません。"
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-pro')
+
     is_praise_mode = random.random() < 0.05
     all_activities = defaultdict(datetime.datetime)
     for row in all_data:
@@ -273,7 +373,6 @@ def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
                 time_of_day_breakdown['昼 (12時〜18時)'] += duration_seconds
             else:
                 time_of_day_breakdown['夜 (18時〜0時)'] += duration_seconds
-        
         time_of_day_prompt = "### 時間帯別活動時間\n"
         for time_range, duration in time_of_day_breakdown.items():
             time_of_day_prompt += f"- {time_range}: {duration:.2f} 秒\n"
@@ -298,7 +397,67 @@ def get_ai_feedback(formatted_data, aggregated_data, all_data, report_type):
     except Exception as e:
         return f"Gemini APIからフィードバックを取得できませんでした: {e}"
 
-def generate_pdf_report(report_data, filename="report.pdf"):
+def generate_pdf_report():
+    genai, A4, SimpleDocTemplate, Paragraph, Spacer, getSampleStyleSheet, pdfmetrics, TTFont, load_dotenv = get_heavy_libs()[0:9]
+
+    try:
+        if not os.path.exists(resource_path("reports/weekly")):
+            os.makedirs(resource_path("reports/weekly"))
+        if not os.path.exists(resource_path("reports/monthly")):
+            os.makedirs(resource_path("reports/monthly"))
+            
+        today = datetime.date.today()
+        is_sunday = today.isoweekday() == 7
+        last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
+        is_last_day = today == last_day_of_month
+
+        if is_last_day:
+            run_report_generator('monthly')
+            messagebox.showinfo("Success", "Hawk Eye Monthly Report ready.")
+        elif is_sunday:
+            run_report_generator('weekly')
+            messagebox.showinfo("Success", "Hawk Eye Weekly Report ready.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Report generation failed: {e}")
+
+def run_report_generator(report_type):
+    today = datetime.date.today()
+    if report_type == 'weekly':
+        start_date = today - datetime.timedelta(days=7)
+        end_date = today
+        period_data, all_data = get_activity_data(start_date, end_date)
+        formatted_data, aggregated_data = format_data_for_ai(period_data)
+        ai_feedback = get_ai_feedback(formatted_data, aggregated_data, all_data, "weekly")
+        report_data = {
+            'title': f"Hawk Eye Report {start_date.strftime('%Y%m%d')}~{end_date.strftime('%Y%m%d')}",
+            'feedback': ai_feedback,
+            'aggregated_data': aggregated_data
+        }
+        filename = f"reports/weekly/weekly_report_{end_date.strftime('%Y%m%d')}.pdf"
+        generate_pdf_report_file(report_data, filename)
+        
+    elif report_type == 'monthly':
+        start_date = today.replace(day=1)
+        end_date = today
+        period_data, all_data = get_activity_data(start_date, end_date)
+        formatted_data, aggregated_data = format_data_for_ai(period_data)
+        ai_feedback = get_ai_feedback(formatted_data, aggregated_data, all_data, "monthly")
+        report_data = {
+            'title': f"Hawk Eye Report {start_date.strftime('%Y%m%d')}~{end_date.strftime('%Y%m%d')}",
+            'feedback': ai_feedback,
+            'aggregated_data': aggregated_data
+        }
+        filename = f"reports/monthly/monthly_report_{end_date.strftime('%Y%m%d')}.pdf"
+        generate_pdf_report_file(report_data, filename)
+
+def generate_pdf_report_file(report_data, filename):
+    A4, SimpleDocTemplate, Paragraph, Spacer, getSampleStyleSheet, pdfmetrics, TTFont = get_heavy_libs()[1:8]
+    try:
+        font_path = resource_path('ZenAntique-Regular.ttf')
+        pdfmetrics.registerFont(TTFont('ZenAntique', font_path))
+    except Exception as e:
+        messagebox.showerror("エラー", f"フォントファイルが見つかりません: {e}")
+        return
     if not os.path.exists(os.path.dirname(filename)):
         os.makedirs(os.path.dirname(filename))
     doc = SimpleDocTemplate(resource_path(filename), pagesize=A4)
@@ -330,73 +489,69 @@ def generate_pdf_report(report_data, filename="report.pdf"):
             story.append(Spacer(1, 6))
     doc.build(story)
 
-def run_report_generator(report_type):
-    today = datetime.date.today()
-    if report_type == 'weekly':
-        start_date = today - datetime.timedelta(days=7)
-        end_date = today
-        period_data, all_data = get_activity_data(start_date, end_date)
-        formatted_data, aggregated_data = format_data_for_ai(period_data)
-        ai_feedback = get_ai_feedback(formatted_data, aggregated_data, all_data, "weekly")
-        report_data = {
-            'title': f"Hawk Eye Report {start_date.strftime('%Y%m%d')}~{end_date.strftime('%Y%m%d')}",
-            'feedback': ai_feedback,
-            'aggregated_data': aggregated_data
-        }
-        filename = f"reports/weekly/weekly_report_{end_date.strftime('%Y%m%d')}.pdf"
-        generate_pdf_report(report_data, filename)
+# --- スプラッシュスクリーンクラス ---
+class SplashScreen(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.attributes('-topmost', True) # 最前面に固定
         
-    elif report_type == 'monthly':
-        start_date = today.replace(day=1)
-        end_date = today
-        period_data, all_data = get_activity_data(start_date, end_date)
-        formatted_data, aggregated_data = format_data_for_ai(period_data)
-        ai_feedback = get_ai_feedback(formatted_data, aggregated_data, all_data, "monthly")
-        report_data = {
-            'title': f"Hawk Eye Report {start_date.strftime('%Y%m%d')}~{end_date.strftime('%Y%m%d')}",
-            'feedback': ai_feedback,
-            'aggregated_data': aggregated_data
-        }
-        filename = f"reports/monthly/monthly_report_{end_date.strftime('%Y%m%d')}.pdf"
-        generate_pdf_report(report_data, filename)
-
-# --- generate_hawk_eye_report()関数の修正 ---
-
-def generate_hawk_eye_report():
-    try:
-        if not os.path.exists(resource_path("reports/weekly")):
-            os.makedirs(resource_path("reports/weekly"))
-        if not os.path.exists(resource_path("reports/monthly")):
-            os.makedirs(resource_path("reports/monthly"))
+        splash_width, splash_height = 400, 400
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width / 2) - (splash_width / 2)
+        y = (screen_height / 2) - (splash_height / 2)
+        self.geometry(f"{splash_width}x{splash_height}+{int(x)}+{int(y)}")
+        
+        try:
+            splash_logo_path = resource_path('images/HabitHawk_SplashScreen.png')
+            if os.path.exists(splash_logo_path):
+                img = Image.open(splash_logo_path)
+                
+                img_width, img_height = img.size
+                max_dim = min(splash_width, splash_height) * 0.8
+                ratio = min(max_dim / img_width, max_dim / img_height)
+                new_width = int(img_width * ratio)
+                new_height = int(img_height * ratio)
+                resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                self.splash_logo_image_ref = ctk.CTkImage(resized_img, size=(new_width, new_height))
+                logo_label = ctk.CTkLabel(self, image=self.splash_logo_image_ref, text="", fg_color="transparent")
+                logo_label.pack(expand=True, fill="both")
+            else:
+                print(f"スプラッシュスクリーン用のロゴファイルが見つかりません: {splash_logo_path}")
+                text_label = ctk.CTkLabel(self, text="HabitHawk\nLoading...", font=("Helvetica", 14), text_color="white", fg_color="transparent")
+                text_label.pack(expand=True)
             
-        today = datetime.date.today()
-        is_sunday = today.isoweekday() == 7
-        last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
-        is_last_day = today == last_day_of_month
+        except Exception as e:
+            print(f"スプラッシュスクリーンロゴの読み込み中にエラーが発生しました: {e}")
+            text_label = ctk.CTkLabel(self, text="HabitHawk\nLoading...", font=("Helvetica", 14), text_color="white", fg_color="transparent")
+            text_label.pack(expand=True)
 
-        if is_last_day:
-            run_report_generator('monthly')
-            messagebox.showinfo("Success", "Hawk Eye Monthly Report ready.")
-        elif is_sunday:
-            run_report_generator('weekly')
-            messagebox.showinfo("Success", "Hawk Eye Weekly Report ready.")
-    except Exception as e:
-        messagebox.showerror("Error", f"Report generation failed: {e}")
-
-# アプリケーションの実行
+# --- 修正後の新しいメインの起動ロジック ---
 if __name__ == "__main__":
-    app = App()
+    # テーマを設定し、一時ファイルを削除する関数を取得
+    temp_file_deleter = set_custom_theme()
     
-    # Hawk Eyeボタンの表示ロジック
-    today = datetime.date.today()
-    is_sunday = today.isoweekday() == 7
-    last_day_of_month = (today + datetime.timedelta(days=1)).replace(day=1) - datetime.timedelta(days=1)
-    is_last_day = today == last_day_of_month
+    # アプリケーションのメインウィンドウを作成
+    app = App()
+    app.withdraw()  # 初期状態では非表示にする
+    
+    # スプラッシュスクリーンを作成（メインウィンドウの子として）
+    splash = SplashScreen(app)
+    
+    # 2秒後にスプラッシュスクリーンを非表示にし、メインウィンドウを表示する
+    def start_main_app():
+        splash.destroy()
+        app.deiconify()
+    
+    app.after(2000, start_main_app)
+    
+    # アプリケーション終了時に一時ファイルを削除する設定
+    if temp_file_deleter:
+        app.protocol("WM_DELETE_WINDOW", lambda: (temp_file_deleter(), app.destroy()))
+    else:
+        app.protocol("WM_DELETE_WINDOW", app.destroy)
 
-    if is_sunday or is_last_day:
-        hawk_eye_button = ctk.CTkButton(app, text="Hawk Eye", command=generate_hawk_eye_report)
-        hawk_eye_button.pack(pady=10)
-
+    # アプリケーションのメインループを開始
     app.mainloop()
-
-conn.close()
